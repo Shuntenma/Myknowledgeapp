@@ -82,7 +82,14 @@
 // ─── CONFIG ───────────────────────────────────────────────────────────────────
 const SUPABASE_URL = "https://gwavfkfznhvgajkapehq.supabase.co";
 const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imd3YXZma2Z6bmh2Z2Fqa2FwZWhxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzIyNjE1MTIsImV4cCI6MjA4NzgzNzUxMn0.QrVrwxQ1k38KdV9I0PhUFUyRwBwhuEYXXvtYg5ToE5c";
-const ANTHROPIC_KEY = "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";
+const ANTHROPIC_KEY = (()=>{
+  let k = localStorage.getItem("anthropic_key");
+  if (!k) {
+    k = prompt("Entrez votre clé API Anthropic (sk-ant-...):");
+    if (k && k.startsWith("sk-ant-")) localStorage.setItem("anthropic_key", k);
+  }
+  return k || "";
+})();
 const MODEL = "claude-sonnet-4-20250514";
 
 // ─── STATE ────────────────────────────────────────────────────────────────────
@@ -115,6 +122,12 @@ let state = {
   importTarget: "vocab",
   // coding
   codingPacks: [],
+  // newj
+  newjPacks: [],
+  newjMsgs: [],
+  newjInput: "",
+  newjLoading: false,
+  newjPending: null,
   codingMsgs: [],
   codingInput: "",
   codingLoading: false,
@@ -173,10 +186,11 @@ async function callClaude(messages, system) {
 
 // ─── LOAD ────────────────────────────────────────────────────────────────────
 async function loadData() {
-  const [vp, ss, cp] = await Promise.all([sbGet("vocab_packs"), sbGet("savoir_sessions"), sbGet("coding_packs")]);
+  const [vp, ss, cp, nj] = await Promise.all([sbGet("vocab_packs"), sbGet("savoir_sessions"), sbGet("coding_packs"), sbGet("newj_packs")]);
   state.vocabPacks = Array.isArray(vp) ? vp.map(r=>({id:r.id,name:r.name,cards:r.cards||[],completions:r.completions||0})) : [];
   state.savoirSessions = Array.isArray(ss) ? ss.map(r=>({id:r.id,title:r.title,messages:r.messages||[],cards:r.cards||[],completions:r.completions||0})) : [];
   state.codingPacks = Array.isArray(cp) ? cp.map(r=>({id:r.id,name:r.name,cards:r.cards||[],completions:r.completions||0})) : [];
+  state.newjPacks = Array.isArray(nj) ? nj.map(r=>({id:r.id,name:r.name,cards:r.cards||[],completions:r.completions||0})) : [];
   state.ready = true;
   render();
 }
@@ -184,6 +198,7 @@ async function loadData() {
 // ─── SAVE ────────────────────────────────────────────────────────────────────
 async function savePack(pack) { await sbUpsert("vocab_packs",{id:pack.id,name:pack.name,cards:pack.cards,completions:pack.completions||0}); }
 async function saveCodingPack(pack) { await sbUpsert("coding_packs",{id:pack.id,name:pack.name,cards:pack.cards,completions:pack.completions||0}); }
+async function saveNewjPack(pack) { await sbUpsert("newj_packs",{id:pack.id,name:pack.name,cards:pack.cards,completions:pack.completions||0}); }
 async function saveSession(s) { await sbUpsert("savoir_sessions",{id:s.id,title:s.title,messages:s.messages,cards:s.cards,completions:s.completions||0}); }
 
 // ─── RENDER ──────────────────────────────────────────────────────────────────
@@ -200,6 +215,7 @@ function render() {
   else if (state.tab==="vocab") content.appendChild(renderVocabChat());
   else if (state.tab==="savoir") content.appendChild(renderSavoir());
   else if (state.tab==="coding") content.appendChild(renderCodingChat());
+  else if (state.tab==="newj") content.appendChild(renderNewjChat());
   else if (state.tab==="cards") content.appendChild(renderCards());
   app.appendChild(content);
 }
@@ -219,16 +235,18 @@ function renderNav() {
   const totalVocab = state.vocabPacks.reduce((s,p)=>s+p.cards.length,0);
   const totalSavoir = state.savoirSessions.reduce((s,s2)=>s+s2.cards.length,0);
   const totalCoding = state.codingPacks.reduce((s,p)=>s+p.cards.length,0);
+  const totalNewj = state.newjPacks.reduce((s,p)=>s+p.cards.length,0);
   const tabs = [
     {id:"import",label:"Importer",icon:"⬆️"},
     {id:"vocab",label:"Vocabulaire",icon:"📖",count:totalVocab},
     {id:"savoir",label:"Savoir",icon:"🏛️",count:totalSavoir},
     {id:"coding",label:"Coding",icon:"💻",count:totalCoding},
-    {id:"cards",label:"Mes Cartes",icon:"🗂️",count:totalVocab+totalSavoir+totalCoding},
+    {id:"newj",label:"New J",icon:"💼",count:totalNewj},
+    {id:"cards",label:"Mes Cartes",icon:"🗂️",count:totalVocab+totalSavoir+totalCoding+totalNewj},
   ];
   const nav = el("div",{class:"nav"});
   tabs.forEach(t=>{
-    const color = t.id==="vocab"?"#2D6A4F":t.id==="savoir"?"#7B4B94":t.id==="coding"?"#1D4ED8":"#1A1A2E";
+    const color = t.id==="vocab"?"#2D6A4F":t.id==="savoir"?"#7B4B94":t.id==="coding"?"#1D4ED8":t.id==="newj"?"#D97706":"#1A1A2E";
     const active = state.tab===t.id;
     const btn = el("button",{class:`nav-btn${active?" active":""}`,style:{"--active-color":color,color:active?color:"#6B7280"}},
       [t.icon+" "+t.label]);
@@ -250,7 +268,7 @@ function renderImport() {
 
   // Choix de la destination
   const destWrap = el("div",{style:{display:"flex",gap:"0.5rem",marginBottom:"1.5rem",flexWrap:"wrap"}});
-  [["vocab","📖 Vocabulaire","#2D6A4F"],["savoir","🏛️ Savoir","#7B4B94"],["coding","💻 Coding","#1D4ED8"]].forEach(([v,l,c])=>{
+  [["vocab","📖 Vocabulaire","#2D6A4F"],["savoir","🏛️ Savoir","#7B4B94"],["coding","💻 Coding","#1D4ED8"],["newj","💼 New J","#D97706"]].forEach(([v,l,c])=>{
     const active = state.importTarget===v;
     const btn = el("button",{class:"btn btn-sm",style:{
       background:active?c:"#fff",
@@ -357,7 +375,10 @@ async function processExcel(file) {
 async function confirmImport() {
   const target = state.importTarget || "vocab";
   for (const pack of state.importPreview) {
-    if (target === "coding") {
+    if (target === "newj") {
+      state.newjPacks.push(pack);
+      await saveNewjPack(pack);
+    } else if (target === "coding") {
       state.codingPacks.push(pack);
       await saveCodingPack(pack);
     } else if (target === "savoir") {
@@ -582,6 +603,48 @@ function scrollChatToBottom() {
 }
 
 // ─── CARDS TAB ────────────────────────────────────────────────────────────────
+// ─── NEW J CHAT ──────────────────────────────────────────────────────────────
+function renderNewjChat() {
+  const wrap = el("div",{class:"page chat-wrap"});
+  const header = el("div",{style:{display:"flex",alignItems:"center",gap:"0.5rem",marginBottom:"1rem"}});
+  header.appendChild(el("span",{class:"badge",style:{background:"rgba(217,119,6,0.1)",color:"#D97706"}},["💼 New J"]));
+  header.appendChild(el("span",{style:{color:"#6B7280",fontSize:"13px"}},["Posez une question — une carte sera proposée automatiquement"]));
+  wrap.appendChild(header);
+  wrap.appendChild(renderChatMessages(state.newjMsgs||[], state.newjLoading||false, state.newjPending||null, "#D97706",
+    ()=>confirmNewjCard(), ()=>{state.newjPending=null;render();}
+  ));
+  wrap.appendChild(renderChatInput(state.newjInput||"", v=>{state.newjInput=v;}, sendNewj, state.newjLoading||false, "#D97706", "Ex : comment structurer un cas, la matrice BCG…"));
+  return wrap;
+}
+
+async function sendNewj() {
+  if (!state.newjMsgs) state.newjMsgs=[];
+  const q = (state.newjInput||"").trim();
+  if (!q||state.newjLoading) return;
+  state.newjInput=""; state.newjLoading=true;
+  state.newjMsgs.push({role:"user",content:q}); render();
+  const reply = await callClaude(state.newjMsgs, "Tu es un assistant pédagogique pour quelqu'un qui prépare un nouveau job en conseil en stratégie. Explique clairement les concepts, frameworks et cas demandés. Réponds en français, de manière complète. Ne coupe pas ta réponse.");
+  state.newjMsgs.push({role:"assistant",content:reply});
+  const titleReply = await callClaude([{role:"user",content:`Donne un titre très court (3-6 mots max) pour une carte mémoire sur ce sujet : "${q}". Réponds uniquement avec le titre, sans ponctuation ni guillemets.`}], "Tu génères des titres courts pour des cartes mémoire.");
+  state.newjPending={id:uid(),front:titleReply.trim(),back:reply,category:"newj",createdAt:Date.now()};
+  state.newjLoading=false; render();
+  scrollChatToBottom();
+}
+
+async function confirmNewjCard() {
+  const card = state.newjPending;
+  if (!card) return;
+  let pack = state.newjPacks[state.newjPacks.length-1];
+  if (!pack || pack.cards.length >= 20) {
+    pack = {id:uid(), name:`New J ${state.newjPacks.length+1}`, cards:[], completions:0};
+    state.newjPacks.push(pack);
+  }
+  pack.cards.push(card);
+  await saveNewjPack(pack);
+  state.newjPending=null;
+  render();
+}
+
 // ─── CODING CHAT ─────────────────────────────────────────────────────────────
 function renderCodingChat() {
   const wrap = el("div",{class:"page chat-wrap"});
@@ -630,7 +693,7 @@ function renderCards() {
   const hdr=el("div",{style:{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:"1.5rem",flexWrap:"wrap",gap:"0.5rem"}});
   hdr.appendChild(el("h2",{class:"serif",style:{fontSize:"1.4rem"}},["Mes Cartes"]));
   const filters=el("div",{class:"filter-bar"});
-  [["all","Toutes"],["vocab","Vocabulaire"],["savoir","Savoir"],["coding","Coding"]].forEach(([v,l])=>{
+  [["all","Toutes"],["vocab","Vocabulaire"],["savoir","Savoir"],["coding","Coding"],["newj","New J"]].forEach(([v,l])=>{
     const btn=el("button",{class:"filter-btn",style:{fontWeight:state.cardsFilter===v?"600":"400",background:state.cardsFilter===v?"#1A1A2E":"#fff",color:state.cardsFilter===v?"#fff":"#6B7280",fontFamily:"Inter,sans-serif"}},[l]);
     btn.addEventListener("click",()=>{state.cardsFilter=v;render();});
     filters.appendChild(btn);
@@ -640,8 +703,9 @@ function renderCards() {
   const vPacks = (state.cardsFilter==="all"||state.cardsFilter==="vocab")?state.vocabPacks:(state.cardsFilter==="savoir"||state.cardsFilter==="coding")?[]:state.vocabPacks;
   const sSessions = (state.cardsFilter==="all"||state.cardsFilter==="savoir")?state.savoirSessions.filter(s=>s.cards.length>0):(state.cardsFilter==="vocab"||state.cardsFilter==="coding")?[]:state.savoirSessions.filter(s=>s.cards.length>0);
   const cPacks = (state.cardsFilter==="all"||state.cardsFilter==="coding")?state.codingPacks:[];
+  const njPacks = (state.cardsFilter==="all"||state.cardsFilter==="newj")?state.newjPacks:[];
 
-  if (vPacks.length===0&&sSessions.length===0&&cPacks.length===0) {
+  if (vPacks.length===0&&sSessions.length===0&&cPacks.length===0&&njPacks.length===0) {
     const empty=el("div",{class:"empty-state"});
     empty.appendChild(el("div",{style:{fontSize:"40px",marginBottom:"0.75rem"}},["📚"]));
     empty.appendChild(el("p",{style:{fontWeight:"500"}},["Aucune carte pour le moment"]));
@@ -666,6 +730,12 @@ const sortPacks = arr => [...arr].sort((a,b) => (a.completions||0)-(b.completion
     wrap.appendChild(el("p",{class:"section-label",style:{color:"#1D4ED8"}},["💻 Coding"]));
     const grid=el("div",{class:"grid"});
     sortPacks(cPacks).forEach(p=>grid.appendChild(renderPackCard(p.name,p.cards.length,p.completions||0,"#1D4ED8",()=>startStudy(p.cards,p.name,"#1D4ED8",p,"coding"),async()=>{await sbDelete("coding_packs",p.id);state.codingPacks=state.codingPacks.filter(x=>x.id!==p.id);render();},()=>{state.editBloc={type:"coding",id:p.id};render();})));
+    wrap.appendChild(grid);
+  }
+  if (njPacks.length>0) {
+    wrap.appendChild(el("p",{class:"section-label",style:{color:"#D97706"}},["💼 New J"]));
+    const grid=el("div",{class:"grid"});
+    sortPacks(njPacks).forEach(p=>grid.appendChild(renderPackCard(p.name,p.cards.length,p.completions||0,"#D97706",()=>startStudy(p.cards,p.name,"#D97706",p,"newj"),async()=>{await sbDelete("newj_packs",p.id);state.newjPacks=state.newjPacks.filter(x=>x.id!==p.id);render();},()=>{state.editBloc={type:"newj",id:p.id};render();})));
     wrap.appendChild(grid);
   }
   return wrap;
@@ -697,11 +767,13 @@ function renderPackCard(name, count, completions, color, onStudy, onDelete, onEd
 // ─── EDIT BLOC ────────────────────────────────────────────────────────────────
 function renderEditBloc() {
   const {type, id} = state.editBloc;
-  const color = type==="vocab"?"#2D6A4F":type==="coding"?"#1D4ED8":"#7B4B94";
+  const color = type==="vocab"?"#2D6A4F":type==="coding"?"#1D4ED8":type==="newj"?"#D97706":"#7B4B94";
   const source = type==="vocab"
     ? state.vocabPacks.find(p=>p.id===id)
     : type==="coding"
     ? state.codingPacks.find(p=>p.id===id)
+    : type==="newj"
+    ? state.newjPacks.find(p=>p.id===id)
     : state.savoirSessions.find(s=>s.id===id);
   if (!source) { state.editBloc=null; render(); return el("div"); }
 
@@ -726,7 +798,7 @@ function renderEditBloc() {
   saveNameBtn.addEventListener("click",async()=>{
     const v=nameInp.value.trim();
     if(!v) return;
-    if(type==="vocab"){source.name=v;await savePack(source);}else if(type==="coding"){source.name=v;await saveCodingPack(source);}else{source.title=v;await saveSession(source);}
+    if(type==="vocab"){source.name=v;await savePack(source);}else if(type==="coding"){source.name=v;await saveCodingPack(source);}else if(type==="newj"){source.name=v;await saveNewjPack(source);}else{source.title=v;await saveSession(source);}
     render();
   });
   nameRow.append(nameInp,saveNameBtn);
@@ -744,7 +816,7 @@ function renderEditBloc() {
     const delC = el("button",{style:{background:"none",border:"none",color:"#DC2626",cursor:"pointer",fontSize:"13px",fontFamily:"Inter,sans-serif",padding:"2px 6px",borderRadius:"6px"}},["✕ Supprimer"]);
     delC.addEventListener("click",async()=>{
       source.cards.splice(i,1);
-      if(type==="vocab") await savePack(source); else if(type==="coding") await saveCodingPack(source); else await saveSession(source);
+      if(type==="vocab") await savePack(source); else if(type==="coding") await saveCodingPack(source); else if(type==="newj") await saveNewjPack(source); else await saveSession(source);
       render();
     });
     rowTop.appendChild(delC);
@@ -763,7 +835,7 @@ function renderEditBloc() {
     const saveCardBtn = el("button",{class:"btn btn-outline btn-sm",style:{"--btn-color":color,marginTop:"0.5rem"}},["✓ Enregistrer"]);
     saveCardBtn.addEventListener("click",async()=>{
       c.front=rectoInp.value; c.back=versoInp.value;
-      if(type==="vocab") await savePack(source); else if(type==="coding") await saveCodingPack(source); else await saveSession(source);
+      if(type==="vocab") await savePack(source); else if(type==="coding") await saveCodingPack(source); else if(type==="newj") await saveNewjPack(source); else await saveSession(source);
       saveCardBtn.textContent="✓ Sauvegardé";
       setTimeout(()=>saveCardBtn.textContent="✓ Enregistrer",1500);
     });
@@ -782,7 +854,7 @@ function renderEditBloc() {
     const f=newRectoInp.value.trim(), b=newVersoInp.value.trim();
     if(!f||!b) return;
     source.cards.push({id:uid(),front:f,back:b});
-    if(type==="vocab") await savePack(source); else if(type==="coding") await saveCodingPack(source); else await saveSession(source);
+    if(type==="vocab") await savePack(source); else if(type==="coding") await saveCodingPack(source); else if(type==="newj") await saveNewjPack(source); else await saveSession(source);
     render();
   });
   addBox.append(newRectoInp,newVersoInp,addBtn);
@@ -822,6 +894,8 @@ function renderStudy() {
       if (src) {
         src.completions = (src.completions||0) + 1;
         if (state.studyPack.sourceType==="vocab") savePack(src);
+        else if (state.studyPack.sourceType==="coding") saveCodingPack(src);
+        else if (state.studyPack.sourceType==="newj") saveNewjPack(src);
         else saveSession(src);
       }
     }
