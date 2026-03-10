@@ -82,14 +82,7 @@
 // ─── CONFIG ───────────────────────────────────────────────────────────────────
 const SUPABASE_URL = "https://gwavfkfznhvgajkapehq.supabase.co";
 const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imd3YXZma2Z6bmh2Z2Fqa2FwZWhxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzIyNjE1MTIsImV4cCI6MjA4NzgzNzUxMn0.QrVrwxQ1k38KdV9I0PhUFUyRwBwhuEYXXvtYg5ToE5c";
-const ANTHROPIC_KEY = (()=>{
-  let k = localStorage.getItem("anthropic_key");
-  if (!k) {
-    k = prompt("Entrez votre clé API Anthropic (sk-ant-...):");
-    if (k && k.startsWith("sk-ant-")) localStorage.setItem("anthropic_key", k);
-  }
-  return k || "";
-})();
+const ANTHROPIC_KEY = "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";
 const MODEL = "claude-sonnet-4-20250514";
 
 // ─── STATE ────────────────────────────────────────────────────────────────────
